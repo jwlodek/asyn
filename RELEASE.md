@@ -1,6 +1,6 @@
 # asynDriver: Release Notes
 
-## Release 4-46 (May XXX, 2026)
+## Release 4-46 (July 20, 2026)
 - devVxi11
   - Make VXI11 support (for VISA systems) optional.
     VXI11 is broken on RTEMS-5 and rarely required for real-time system IOCs.
