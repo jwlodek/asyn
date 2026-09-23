@@ -184,12 +184,16 @@ void testA(asynPortDriver *portA)
 #ifdef WITH_PARAM_INVENTORY
 void testInventory()
 {
-    asynPortDriver *invA = instantiateDriver("portInvA", false);
+    asynPortDriver *invA = new asynPortDriver("portInvA", 2,
+                                              asynDrvUserMask|asynInt32Mask,
+                                              asynInt32Mask,
+                                              0, 0, 0,
+                                              epicsThreadGetStackSize(epicsThreadStackSmall));
     asynPortDriver *invB = instantiateDriver("portInvB", false);
     int index = -1;
 
     testOk1(invA->createParam(0, "alpha", asynParamInt32, &index)==asynSuccess);
-    testOk1(invA->createParam(0, "beta", asynParamFloat64, &index)==asynSuccess);
+    testOk1(invA->createParam(1, "beta", asynParamFloat64, &index)==asynSuccess);
     testOk1(invB->createParam(0, "gamma", asynParamOctet, &index)==asynSuccess);
 
     asynParamInventory::Inventory inventory = asynParamInventory::getInventory();
@@ -202,6 +206,12 @@ void testInventory()
     const asynParamInventory::ParamInfo *gamma = findInventoryParam(inventory["portInvB"], "gamma");
     testOk1(alpha && alpha->asynType == "asynParamInt32" && alpha->addr == 0);
     testOk1(gamma && gamma->asynType == "asynParamOctet" && gamma->index == 0);
+    testOk1(findInventoryParam(inventory["portInvA"], "beta") &&
+            findInventoryParam(inventory["portInvA"], "beta")->addr == 1);
+
+    asynParamInventory::registerPort(invA);
+    inventory = asynParamInventory::getInventory();
+    testOk1(inventory["portInvA"].params.size() == 2u);
 
     delete invB;
     inventory = asynParamInventory::getInventory();
@@ -244,7 +254,7 @@ MAIN(asynPortDriverTest)
     const int interfaceTests = 14;
     const int additionalTests = 11;
 #ifdef WITH_PARAM_INVENTORY
-    const int inventoryTests = 11;
+    const int inventoryTests = 14;
 #else
     const int inventoryTests = 0;
 #endif

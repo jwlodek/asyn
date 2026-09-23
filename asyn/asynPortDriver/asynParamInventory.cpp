@@ -16,6 +16,7 @@
 #include <vector>
 
 #include <epicsExport.h>
+#include <epicsEvent.h>
 #include <epicsGuard.h>
 #include <epicsMutex.h>
 #include <epicsString.h>
@@ -49,11 +50,6 @@ using asynParamInventory::ParamInfo;
 using asynParamInventory::PortInfo;
 using asynParamInventory::RecordRef;
 
-struct RegisteredPort {
-    std::string portName;
-    asynPortDriver *driver;
-};
-
 struct ParsedLink {
     ParsedLink() : addr(0), valid(false) {}
     std::string portName;
@@ -62,16 +58,36 @@ struct ParsedLink {
     bool valid;
 };
 
+struct RegisteredPort {
+    RegisteredPort() : driver(0), active(false) {}
+    std::string portName;
+    asynPortDriver *driver;
+    bool active;
+};
+
+struct RegisteredPortEntry {
+    RegisteredPortEntry() : driver(0), snapshotRefs(0), unregistering(false) {}
+    asynPortDriver *driver;
+    size_t snapshotRefs;
+    bool unregistering;
+};
+
 epicsMutex& inventoryMutex()
 {
     static epicsMutex mutex;
     return mutex;
 }
 
-std::map<std::string, asynPortDriver*>& registry()
+std::map<std::string, RegisteredPortEntry>& registry()
 {
-    static std::map<std::string, asynPortDriver*> ports;
+    static std::map<std::string, RegisteredPortEntry> ports;
     return ports;
+}
+
+epicsEvent& inventoryEvent()
+{
+    static epicsEvent event;
+    return event;
 }
 
 std::string& publishedPvName()
@@ -247,13 +263,15 @@ int parseReason(const std::string& userParam, int *reason)
 
 void buildPortInfo(asynPortDriver *driver, PortInfo *portInfo)
 {
+    epicsGuard<asynPortDriver> guard(*driver);
     int addr;
+    int maxAddr = driver->maxAddr;
 
     portInfo->portName = driver->portName ? driver->portName : "";
+    /* Avoid ABI changes or RTTI-dependent output; leave empty when unavailable. */
     portInfo->driverClass = "";
 
-    driver->lock();
-    for (addr=0; addr<driver->maxAddr; addr++) {
+    for (addr=0; addr<maxAddr; addr++) {
         int numParams = 0;
         if (driver->getNumParams(addr, &numParams) != asynSuccess) continue;
         for (int index=0; index<numParams; index++) {
@@ -270,7 +288,21 @@ void buildPortInfo(asynPortDriver *driver, PortInfo *portInfo)
             portInfo->params.push_back(info);
         }
     }
-    driver->unlock();
+}
+
+void releaseRegisteredPort(RegisteredPort *port)
+{
+    if (!port->active) return;
+
+    epicsGuard<epicsMutex> guard(inventoryMutex());
+    std::map<std::string, RegisteredPortEntry>::iterator it = registry().find(port->portName);
+    if (it != registry().end() && it->second.snapshotRefs > 0) {
+        it->second.snapshotRefs--;
+        if (it->second.unregistering && (it->second.snapshotRefs == 0)) {
+            inventoryEvent().signal();
+        }
+    }
+    port->active = false;
 }
 
 ParamInfo *findParamInfo(PortInfo *portInfo, const ParsedLink& parsed)
@@ -339,17 +371,6 @@ std::string getInfoString(const DBENTRY& entry, const char *infoName)
     return value;
 }
 
-void scanLinkField(PortInfo *portInfo,
-                   const RecordRef& ref,
-                   const std::string& linkText,
-                   int readback)
-{
-    ParsedLink parsed = parseAsynLink(linkText);
-    if (!parsed.valid) return;
-    if (parsed.portName != portInfo->portName) return;
-    addRecordRef(portInfo, parsed, ref, readback);
-}
-
 void attachRecordBindings(Inventory *inventory)
 {
     DBENTRY entry;
@@ -371,16 +392,24 @@ void attachRecordBindings(Inventory *inventory)
 
         if (!inp.empty()) {
             ref.link = inp;
-            for (portIt = inventory->begin(); portIt != inventory->end(); ++portIt) {
-                scanLinkField(&portIt->second, ref, inp, 1);
+            ParsedLink parsed = parseAsynLink(inp);
+            if (parsed.valid) {
+                portIt = inventory->find(parsed.portName);
+                if (portIt != inventory->end()) {
+                    addRecordRef(&portIt->second, parsed, ref, 1);
+                }
             }
         }
 
         if (!out.empty()) {
             int readback = (!readbackInfo.empty() && (atoi(readbackInfo.c_str()) != 0));
             ref.link = out;
-            for (portIt = inventory->begin(); portIt != inventory->end(); ++portIt) {
-                scanLinkField(&portIt->second, ref, out, readback);
+            ParsedLink parsed = parseAsynLink(out);
+            if (parsed.valid) {
+                portIt = inventory->find(parsed.portName);
+                if (portIt != inventory->end()) {
+                    addRecordRef(&portIt->second, parsed, ref, readback);
+                }
             }
         }
     }
@@ -421,13 +450,15 @@ std::vector<PortFieldMapEntry> buildPortFieldMap(const Inventory& inventory)
 }
 
 #if defined(WITH_PVXS)
-std::vector<pvxs::Member> recordRefMembers()
+const std::vector<pvxs::Member>& recordRefMembers()
 {
-    std::vector<pvxs::Member> members;
-    members.push_back(pvxs::members::String("name"));
-    members.push_back(pvxs::members::String("recordType"));
-    members.push_back(pvxs::members::String("dtyp"));
-    members.push_back(pvxs::members::String("link"));
+    static std::vector<pvxs::Member> members;
+    if (members.empty()) {
+        members.push_back(pvxs::members::String("name"));
+        members.push_back(pvxs::members::String("recordType"));
+        members.push_back(pvxs::members::String("dtyp"));
+        members.push_back(pvxs::members::String("link"));
+    }
     return members;
 }
 
@@ -449,7 +480,7 @@ void assignRecordRefs(pvxs::Value arrayField, const std::vector<RecordRef>& refs
 void publishPvxs(const Inventory& inventory)
 {
     std::vector<PortFieldMapEntry> portFields = buildPortFieldMap(inventory);
-    std::vector<pvxs::Member> refMembers = recordRefMembers();
+    const std::vector<pvxs::Member>& refMembers = recordRefMembers();
     std::vector<pvxs::Member> valueMembers;
     size_t i;
 
@@ -626,8 +657,9 @@ void publishPva(const Inventory& inventory)
 
     epics::pvDatabase::PVDatabasePtr master = epics::pvDatabase::PVDatabase::getMaster();
     epics::pvDatabase::getChannelProviderLocal();
-    if (master->findRecord(publishedPvName())) {
-        master->removeRecord(master->findRecord(publishedPvName()));
+    epics::pvDatabase::PVRecordPtr existing = master->findRecord(publishedPvName());
+    if (existing) {
+        master->removeRecord(existing);
     }
     InventoryRecordPtr record = InventoryRecord::create(publishedPvName(), root);
     if (record) {
@@ -662,36 +694,70 @@ void registerPort(asynPortDriver *port)
 {
     epicsGuard<epicsMutex> guard(inventoryMutex());
     if (!port || !port->portName) return;
-    registry()[port->portName] = port;
+    RegisteredPortEntry& entry = registry()[port->portName];
+    entry.driver = port;
+    entry.unregistering = false;
 }
 
 void unregisterPort(const char *portName)
 {
-    epicsGuard<epicsMutex> guard(inventoryMutex());
+    std::map<std::string, RegisteredPortEntry>::iterator it;
     if (!portName) return;
-    registry().erase(portName);
+
+    inventoryMutex().lock();
+    it = registry().find(portName);
+    if (it == registry().end()) {
+        inventoryMutex().unlock();
+        return;
+    }
+
+    it->second.unregistering = true;
+    while (it->second.snapshotRefs > 0) {
+        inventoryMutex().unlock();
+        inventoryEvent().wait();
+        inventoryMutex().lock();
+        it = registry().find(portName);
+        if (it == registry().end()) {
+            inventoryMutex().unlock();
+            return;
+        }
+    }
+    registry().erase(it);
+    inventoryMutex().unlock();
 }
 
 Inventory getInventory()
 {
     Inventory inventory;
     std::vector<RegisteredPort> ports;
-    std::map<std::string, asynPortDriver*>::iterator it;
+    std::map<std::string, RegisteredPortEntry>::iterator it;
+    size_t i;
 
     {
         epicsGuard<epicsMutex> guard(inventoryMutex());
         for (it = registry().begin(); it != registry().end(); ++it) {
+            if (it->second.unregistering || !it->second.driver) continue;
+            it->second.snapshotRefs++;
             RegisteredPort port;
             port.portName = it->first;
-            port.driver = it->second;
+            port.driver = it->second.driver;
+            port.active = true;
             ports.push_back(port);
         }
     }
 
-    for (size_t i=0; i<ports.size(); i++) {
-        PortInfo portInfo;
-        buildPortInfo(ports[i].driver, &portInfo);
-        inventory[ports[i].portName] = portInfo;
+    try {
+        for (i=0; i<ports.size(); i++) {
+            PortInfo portInfo;
+            buildPortInfo(ports[i].driver, &portInfo);
+            inventory[ports[i].portName] = portInfo;
+            releaseRegisteredPort(&ports[i]);
+        }
+    } catch (...) {
+        for (i=0; i<ports.size(); i++) {
+            releaseRegisteredPort(&ports[i]);
+        }
+        throw;
     }
 
 #ifndef EPICS_LIBCOM_ONLY
@@ -753,6 +819,7 @@ extern "C" int asynParamInventoryConfigure(const char *pvName)
 #else
     if (!publishedPvName().empty()) {
         errlogPrintf("asynParamInventoryConfigure: built without PVAccess publishing support, inventory will not be published\n");
+        return -1;
     }
 #endif
 

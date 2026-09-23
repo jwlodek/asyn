@@ -138,6 +138,7 @@ INC += asynPortDriver.h
 asyn_SRCS += paramVal.cpp
 asyn_SRCS += asynPortDriver.cpp
 ifeq ($(WITH_PARAM_INVENTORY),YES)
+ifneq ($(EPICS_LIBCOM_ONLY),YES)
   INC += asynParamInventory.h
   DBD += asynParamInventory.dbd
   asyn_SRCS += asynParamInventory.cpp
@@ -150,6 +151,7 @@ ifeq ($(WITH_PARAM_INVENTORY),YES)
     asynParamInventory_CPPFLAGS += -DWITH_PVA
     asyn_LIBS += pvDatabase pvAccess pvData
   endif
+endif
 endif
 
 SRC_DIRS += $(ASYN)/asynPortClient

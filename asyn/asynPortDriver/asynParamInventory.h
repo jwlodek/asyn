@@ -30,16 +30,18 @@ struct ParamInfo {
 
 struct PortInfo {
     std::string portName;
-    std::string driverClass;
+    std::string driverClass; /* May be empty if the runtime class name is not cheaply available. */
     std::vector<ParamInfo> params;
     std::vector<RecordRef> unmatched;
 };
 
 typedef std::map<std::string, PortInfo> Inventory;
 
+/* Returns a point-in-time copy of the current process-wide inventory. */
 ASYN_API void registerPort(asynPortDriver *port);
 ASYN_API void unregisterPort(const char *portName);
 ASYN_API Inventory getInventory();
+/* Writes the current inventory to fp.  If portName is NULL or empty, report all ports. */
 ASYN_API void report(FILE *fp, const char *portName);
 
 } /* namespace asynParamInventory */
