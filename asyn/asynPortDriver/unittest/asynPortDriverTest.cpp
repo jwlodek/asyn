@@ -15,6 +15,9 @@
 
 #include <asynPortDriver.h>
 #include <asynPortClient.h>
+#ifdef WITH_PARAM_INVENTORY
+#include <asynParamInventory.h>
+#endif
 
 // Need interrupt accept from dbAccess.h unless asyn is built with EPICS_LIBCOM_ONLY
 #ifdef EPICS_LIBCOM_ONLY
@@ -59,6 +62,17 @@ static asynPortDriver *instantiateDriver(const char *portName, bool autoDestroy)
                               0, 0,
                               epicsThreadGetStackSize(epicsThreadStackSmall));
 }
+
+#ifdef WITH_PARAM_INVENTORY
+const asynParamInventory::ParamInfo *findInventoryParam(const asynParamInventory::PortInfo& portInfo,
+                                                        const char *name)
+{
+    for (size_t i=0; i<portInfo.params.size(); i++) {
+        if (portInfo.params[i].name == name) return &portInfo.params[i];
+    }
+    return 0;
+}
+#endif
 
 void testA(asynPortDriver *portA)
 {
@@ -167,6 +181,39 @@ void testA(asynPortDriver *portA)
     }
 }
 
+#ifdef WITH_PARAM_INVENTORY
+void testInventory()
+{
+    asynPortDriver *invA = instantiateDriver("portInvA", false);
+    asynPortDriver *invB = instantiateDriver("portInvB", false);
+    int index = -1;
+
+    testOk1(invA->createParam(0, "alpha", asynParamInt32, &index)==asynSuccess);
+    testOk1(invA->createParam(0, "beta", asynParamFloat64, &index)==asynSuccess);
+    testOk1(invB->createParam(0, "gamma", asynParamOctet, &index)==asynSuccess);
+
+    asynParamInventory::Inventory inventory = asynParamInventory::getInventory();
+    testOk1(inventory.find("portInvA") != inventory.end());
+    testOk1(inventory.find("portInvB") != inventory.end());
+    testOk1(inventory["portInvA"].params.size() == 2u);
+    testOk1(inventory["portInvB"].params.size() == 1u);
+
+    const asynParamInventory::ParamInfo *alpha = findInventoryParam(inventory["portInvA"], "alpha");
+    const asynParamInventory::ParamInfo *gamma = findInventoryParam(inventory["portInvB"], "gamma");
+    testOk1(alpha && alpha->asynType == "asynParamInt32" && alpha->addr == 0);
+    testOk1(gamma && gamma->asynType == "asynParamOctet" && gamma->index == 0);
+
+    delete invB;
+    inventory = asynParamInventory::getInventory();
+    testOk1(inventory.find("portInvB") == inventory.end());
+    testOk1(inventory.find("portInvA") != inventory.end());
+
+    delete invA;
+    inventory = asynParamInventory::getInventory();
+    testOk1(inventory.find("portInvA") == inventory.end());
+}
+#endif
+
 } // namespace
 
 static void checkShutdown(const char *portName) {
@@ -196,7 +243,12 @@ MAIN(asynPortDriverTest)
     const int testRuns = 4;
     const int interfaceTests = 14;
     const int additionalTests = 11;
-    testPlan(testsPerRun * testRuns + interfaceTests + additionalTests);
+#ifdef WITH_PARAM_INVENTORY
+    const int inventoryTests = 11;
+#else
+    const int inventoryTests = 0;
+#endif
+    testPlan(testsPerRun * testRuns + interfaceTests + additionalTests + inventoryTests);
     interruptAccept=1;
     try {
         {
@@ -277,6 +329,12 @@ MAIN(asynPortDriverTest)
             testOk1(pasynTrace->setTraceIOTruncateSize(pasynUser, 200) == asynSuccess);
             pasynManager->freeAsynUser(pasynUser);
         }
+#ifdef WITH_PARAM_INVENTORY
+        {
+            testDiag("Testing optional parameter inventory registration");
+            testInventory();
+        }
+#endif
     } catch(std::exception& e) {
         testAbort("Unhandled C++ exception: %s", e.what());
     }

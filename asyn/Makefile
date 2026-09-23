@@ -137,6 +137,20 @@ INC += asynParamSet.h
 INC += asynPortDriver.h
 asyn_SRCS += paramVal.cpp
 asyn_SRCS += asynPortDriver.cpp
+ifeq ($(WITH_PARAM_INVENTORY),YES)
+  INC += asynParamInventory.h
+  DBD += asynParamInventory.dbd
+  asyn_SRCS += asynParamInventory.cpp
+  USR_CPPFLAGS += -DWITH_PARAM_INVENTORY
+  USR_CXXFLAGS += -DWITH_PARAM_INVENTORY
+  ifeq ($(WITH_PVXS),YES)
+    asynParamInventory_CPPFLAGS += -DWITH_PVXS
+    asyn_LIBS += pvxsIoc pvxs
+  else ifeq ($(WITH_PVA),YES)
+    asynParamInventory_CPPFLAGS += -DWITH_PVA
+    asyn_LIBS += pvDatabase pvAccess pvData
+  endif
+endif
 
 SRC_DIRS += $(ASYN)/asynPortClient
 INC += asynPortClient.h

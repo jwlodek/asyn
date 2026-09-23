@@ -54,6 +54,21 @@ DRV_FTDI=NO
 # If your system has libftdi1, set the following to YES. If it has libftdi, set it to NO
 DRV_FTDI_USE_LIBFTDI1=NO
 
+# Build the optional asyn parameter inventory support.  This adds an IOC-wide
+# registry for asynPortDriver ports, their parameters, and any EPICS records
+# linked to those parameters.
+WITH_PARAM_INVENTORY=NO
+
+# Build optional PVAccess publishing for the parameter inventory with the
+# pvAccessCPP/pvDatabase backend.  This only has an effect when
+# WITH_PARAM_INVENTORY=YES.
+WITH_PVA=NO
+
+# Build optional PVAccess publishing for the parameter inventory with the PVXS
+# backend.  This only has an effect when WITH_PARAM_INVENTORY=YES.  If both
+# WITH_PVXS and WITH_PVA are YES then PVXS is preferred.
+WITH_PVXS=NO
+
 # If you want to build asyn so the only dependency on EPICS base is libCom then set the following flag
 #EPICS_LIBCOM_ONLY=YES
 
@@ -68,4 +83,3 @@ DRV_FTDI_USE_LIBFTDI1=NO
 # file itself.
 -include $(TOP)/../CONFIG_SITE.local
 -include $(TOP)/configure/CONFIG_SITE.local
-

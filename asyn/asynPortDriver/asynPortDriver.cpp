@@ -34,6 +34,9 @@
 #include "ParamValWrongType.h"
 #include "ParamValNotDefined.h"
 #include "asynPortDriver.h"
+#ifdef WITH_PARAM_INVENTORY
+#include "asynParamInventory.h"
+#endif
 
 static const char *driverName = "asynPortDriver";
 
@@ -3918,6 +3921,9 @@ static asynDrvUser ifaceDrvUser = {
     initialize(portNameIn, maxAddrIn, interfaceMask, interruptMask, asynFlags,
                autoConnect, priority, stackSize);
     createParams();
+#ifdef WITH_PARAM_INVENTORY
+    asynParamInventory::registerPort(this);
+#endif
 }
 
 
@@ -3947,6 +3953,9 @@ asynPortDriver::asynPortDriver(const char *portNameIn, int maxAddrIn, int interf
 {
     initialize(portNameIn, maxAddrIn, interfaceMask, interruptMask, asynFlags,
                autoConnect, priority, stackSize);
+#ifdef WITH_PARAM_INVENTORY
+    asynParamInventory::registerPort(this);
+#endif
 }
 
 /** Legacy constructor for the asynPortDriver class
@@ -3964,6 +3973,9 @@ asynPortDriver::asynPortDriver(const char *portNameIn, int maxAddrIn, int paramT
 {
     initialize(portNameIn, maxAddrIn, interfaceMask, interruptMask, asynFlags,
                autoConnect, priority, stackSize);
+#ifdef WITH_PARAM_INVENTORY
+    asynParamInventory::registerPort(this);
+#endif
 }
 
 void asynPortDriver::exceptionHandler(asynUser *pasynUser, asynException exception) {
@@ -4163,6 +4175,9 @@ void asynPortDriver::shutdownPortDriver() {
 /** Destructor for asynPortDriver class; frees resources allocated when port driver is created. */
 asynPortDriver::~asynPortDriver()
 {
+#ifdef WITH_PARAM_INVENTORY
+    asynParamInventory::unregisterPort(portName);
+#endif
     if (needsShutdown()) {
         // This should not happen and is a user error, so yell at them. A
         // destructible port always needs to be shut down before being
@@ -4205,5 +4220,3 @@ void* findAsynPortDriver(const char *portName)
     pasynManager->freeAsynUser(pasynUser);
     return pasynInterface->drvPvt;
 }
-
-
